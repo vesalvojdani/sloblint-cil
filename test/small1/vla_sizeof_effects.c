@@ -47,26 +47,37 @@ int main(int argc, char **argv) {
   // and the operand of __alignof__: nothing is evaluated.
   calls = 0; s = sizeof(int (*)[f() + 1]);
   if (calls != 0 || s != sizeof(int *)) E(11);
-  calls = 0; s = sizeof(vla[f()][0]);
-  if (calls != 0 || s != sizeof(int)) E(12);
-  calls = 0; s = sizeof(fixed[f()]);
-  if (calls != 0 || s != sizeof(fixed[0])) E(13);
-  i = 0; s = sizeof(fixed[i++]);
-  if (i != 0) E(14);
-  calls = 0; s = sizeof(calls++);
+  calls = 0; s = sizeof(int (*(*)(void))[f() + 1]);
+  if (calls != 0 || s != sizeof(void (*)(void))) E(12);
+  calls = 0; s = sizeof(struct S1 { int a; } (*)[f() + 1]);
+  if (calls != 0 || s != sizeof(int *)) E(13);
+  // A comma expression is not an lvalue: the array it yields becomes a
+  // pointer (C11 6.3.2.1p3), which is not evaluated. CIL takes the size of
+  // the array instead, so only the calls are checked.
+  calls = 0; s = sizeof((f(), vla));
+  if (calls != 0) E(14);
+  calls = 0; s = sizeof((f(), vla[0]));
   if (calls != 0) E(15);
+  calls = 0; s = sizeof(vla[f()][0]);
+  if (calls != 0 || s != sizeof(int)) E(16);
+  calls = 0; s = sizeof(fixed[f()]);
+  if (calls != 0 || s != sizeof(fixed[0])) E(17);
+  i = 0; s = sizeof(fixed[i++]);
+  if (i != 0) E(18);
+  calls = 0; s = sizeof(calls++);
+  if (calls != 0) E(19);
   calls = 0; s = __alignof__(vla[f()]);
-  if (calls != 0) E(16);
+  if (calls != 0) E(20);
   calls = 0; s = sizeof(sizeof(vla[f()]));
-  if (calls != 0) E(17);
+  if (calls != 0) E(21);
   calls = 0; s = zero && sizeof(vla[f()]);
-  if (calls != 0) E(18);
+  if (calls != 0) E(22);
 
   // The length of vla is fixed at its declaration.
   int m = n;
   n = 7;
   calls = 0; s = sizeof(vla[f()]);
-  if (calls != 1 || s != m * sizeof(int)) E(19);
+  if (calls != 1 || s != m * sizeof(int)) E(23);
 
   SUCCESS;
 }

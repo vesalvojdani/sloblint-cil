@@ -228,6 +228,7 @@ let rec insertArrayLengths (t:typ) (e:exp list):typ =
   | TArray (t, None, a), e::es -> TArray(insertArrayLengths t es, Some e, a)
   | TArray (t, Some e, a), es -> TArray(insertArrayLengths t es, Some e, a)
   | TPtr (t, a), es -> TPtr(insertArrayLengths t es, a)
+  | TFun (rt, args, va, a), es -> TFun(insertArrayLengths rt es, args, va, a)
   | a, [] -> a
   | a, _ -> E.s (error "Something phishy is going on with VLAs, typ does not have as many arrays of length None as exp we want to substitute")
 
@@ -3868,9 +3869,10 @@ and doExp (asconst: bool)   (* This expression is used as a constant *)
         let se, typ =
           match isVariableSizedArray dt with
           | Some (dt', se, lens) ->
-            let typ = insertArrayLengths (doOnlyType bt dt') lens in
+            let typ0 = doOnlyType bt dt' in
+            let typ = insertArrayLengths typ0 lens in
             if isVariableLengthArrayType typ then se, typ
-            else empty, doOnlyType bt dt
+            else empty, typ0
           | None -> empty, doOnlyType bt dt
         in
         finishExp se (SizeOf(typ)) !typeOfSizeOf
@@ -3894,8 +3896,11 @@ and doExp (asconst: bool)   (* This expression is used as a constant *)
 *)
         (* The operand is evaluated only if its type is a variable-length
            array (C11 6.5.3.4p2). Otherwise its side effects in [se] are
-           dropped. *)
-        let se = if isVariableLengthArrayType t then se else empty in
+           dropped. A comma expression is not an lvalue, so an array it
+           yields becomes a pointer (C11 6.3.2.1p3) and is not evaluated,
+           although [t] is the array type. *)
+        let isComma = match e with A.COMMA _ -> true | _ -> false in
+        let se = if isVariableLengthArrayType t && not isComma then se else empty in
         let size =
           match e' with                 (* If we are taking the sizeof an
                                            array we must drop the StartOf  *)
