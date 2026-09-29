@@ -211,6 +211,26 @@ let isVariadicListType t =
   | TBuiltin_va_list _ -> true
   | _ -> false
 
+(* True if [t], with typedefs unrolled, is a variable-length array type: an
+   array type with a length that is not constant, or an array of such a type.
+   [sizeof] evaluates its operand exactly when the operand has such a type
+   (C11 6.5.3.4p2). *)
+let rec isVariableLengthArrayType (t: typ) : bool =
+  match unrollType t with
+  | TArray (et, Some len, _) -> not (isConstant len) || isVariableLengthArrayType et
+  | TArray (et, None, _) -> isVariableLengthArrayType et
+  | _ -> false
+
+(* Fill the arrays of [t] that have no length, outermost first, with the
+   lengths [e], as computed by [isVariableSizedArray]. *)
+let rec insertArrayLengths (t:typ) (e:exp list):typ =
+  match t, e with
+  | TArray (t, None, a), e::es -> TArray(insertArrayLengths t es, Some e, a)
+  | TArray (t, Some e, a), es -> TArray(insertArrayLengths t es, Some e, a)
+  | TPtr (t, a), es -> TPtr(insertArrayLengths t es, a)
+  | a, [] -> a
+  | a, _ -> E.s (error "Something phishy is going on with VLAs, typ does not have as many arrays of length None as exp we want to substitute")
+
 (* Weimer
    multi-character character constants
    In MSCV, this code works:
@@ -2897,14 +2917,6 @@ and makeVarSizeVarInfo (ldecl : location)
                        spec_res
                        (n,ndt,a)
    : varinfo * chunk * bool =
-  let rec insertArrayLengths (t:typ) (e:exp list):typ =
-    match t, e with
-    | TArray (t, None, a), e::es -> TArray(insertArrayLengths t es, Some e, a)
-    | TArray (t, Some e, a), es -> TArray(insertArrayLengths t es, Some e, a)
-    | TPtr (t, a), es -> TPtr(insertArrayLengths t es, a)
-    | a, [] -> a
-    | a, _ -> E.s (error "Something phishy is going on with VLAs, typ does not have as many arrays of length None as exp we want to substitute");
-  in
   match isVariableSizedArray ndt with
     None ->
       makeVarInfoCabs ~isformal:false
@@ -3848,8 +3860,20 @@ and doExp (asconst: bool)   (* This expression is used as a constant *)
     end
 
     | A.TYPE_SIZEOF (bt, dt) ->
-        let typ = doOnlyType bt dt in
-        finishExp empty (SizeOf(typ)) !typeOfSizeOf
+        (* A type name of variable-length array type is evaluated (C11
+           6.5.3.4p2), so the statements [se] computing its lengths come
+           before the sizeof. [doOnlyType] leaves the lengths that have side
+           effects out of the type, and [insertArrayLengths] puts the results
+           of [se] back in. Other type names evaluate nothing. *)
+        let se, typ =
+          match isVariableSizedArray dt with
+          | Some (dt', se, lens) ->
+            let typ = insertArrayLengths (doOnlyType bt dt') lens in
+            if isVariableLengthArrayType typ then se, typ
+            else empty, doOnlyType bt dt
+          | None -> empty, doOnlyType bt dt
+        in
+        finishExp se (SizeOf(typ)) !typeOfSizeOf
 
       (* Intercept the sizeof("string") *)
     | A.EXPR_SIZEOF (A.CONSTANT (A.CONST_STRING (s,enc))) -> begin
@@ -3868,11 +3892,10 @@ and doExp (asconst: bool)   (* This expression is used as a constant *)
         ignore (E.log "sizeof: %a e'=%a, t=%a\n"
                   d_loc !currentLoc d_plainexp e' d_type t);
 *)
-        (* !!!! The book says that the expression is not evaluated, so we
-             drop the potential side-effects
-        if isNotEmpty se then
-          ignore (warn "Warning: Dropping side-effect in EXPR_SIZEOF");
-*)
+        (* The operand is evaluated only if its type is a variable-length
+           array (C11 6.5.3.4p2). Otherwise its side effects in [se] are
+           dropped. *)
+        let se = if isVariableLengthArrayType t then se else empty in
         let size =
           match e' with                 (* If we are taking the sizeof an
                                            array we must drop the StartOf  *)
@@ -3884,7 +3907,7 @@ and doExp (asconst: bool)   (* This expression is used as a constant *)
 
           | _ -> SizeOfE e'
         in
-        finishExp empty size !typeOfSizeOf
+        finishExp se size !typeOfSizeOf
     | A.REAL e ->
       let (se, e', t) = doExp false e (AExp None) in
       let real = Real e' in
