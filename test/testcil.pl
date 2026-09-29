@@ -208,6 +208,7 @@ addTest("testrun/array_multi_varsize");
 addBadComment("testrun/array_multi_varsize",
            "Limitation. CIL does not handle variable-length multidimensional arrays.");
 addTest("testrun/vla_sizeof_effects");
+addTest("testrun/vla_sizeof_bound");
 addTest("testrun/array_formal");
 addTest("testrun/formalscope");
 addTest("test/matrix");

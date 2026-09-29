@@ -212,14 +212,40 @@ let isVariadicListType t =
   | _ -> false
 
 (* True if [t], with typedefs unrolled, is a variable-length array type: an
-   array type with a length that is not constant, or an array of such a type.
-   [sizeof] evaluates its operand exactly when the operand has such a type
-   (C11 6.5.3.4p2). *)
+   array type whose length is not constant by [isConstantArrayLength], or an
+   array of such a type. [sizeof] evaluates its operand exactly when the
+   operand has such a type (C11 6.5.3.4p2). *)
 let rec isVariableLengthArrayType (t: typ) : bool =
   match unrollType t with
-  | TArray (et, Some len, _) -> not (isConstant len) || isVariableLengthArrayType et
+  | TArray (et, Some len, _) -> not (isConstantArrayLength len) || isVariableLengthArrayType et
   | TArray (et, None, _) -> isVariableLengthArrayType et
   | _ -> false
+
+(* True if the array length [e] is constant, so that it does not make its
+   array a variable-length array (C11 6.7.6.2p4). Like [isConstant], except
+   that a [sizeof] is constant only when its operand's type is not a
+   variable-length array: [isConstant] counts every [sizeof] as constant, but
+   the sizeof of a variable-length array is computed at run time. *)
+and isConstantArrayLength (e: exp) : bool =
+  match e with
+  | SizeOf t -> not (isVariableLengthArrayType t)
+  | SizeOfE e -> not (isVariableLengthArrayType (typeOf e))
+  | UnOp (_, e, _) | Real e | Imag e | CastE (_, _, e) -> isConstantArrayLength e
+  | BinOp (_, e1, e2, _) -> isConstantArrayLength e1 && isConstantArrayLength e2
+  | Question (e1, e2, e3, _) ->
+    isConstantArrayLength e1 && isConstantArrayLength e2 && isConstantArrayLength e3
+  | AddrOf (Mem e, off) | StartOf (Mem e, off) ->
+    isConstantArrayLength e && isConstantArrayLengthOffset off
+  | AddrOf (Var vi, off) | StartOf (Var vi, off) ->
+    vi.vglob && isConstantArrayLengthOffset off
+  | Const _ | Lval _ | SizeOfStr _ | AlignOf _ | AlignOfE _ | AddrOfLabel _ ->
+    isConstant e
+
+and isConstantArrayLengthOffset (off: offset) : bool =
+  match off with
+  | NoOffset -> true
+  | Field (_, off) -> isConstantArrayLengthOffset off
+  | Index (e, off) -> isConstantArrayLength e && isConstantArrayLengthOffset off
 
 (* Fill the arrays of [t] that have no length, outermost first, with the
    lengths [e], as computed by [isVariableSizedArray]. *)
@@ -3294,7 +3320,7 @@ and isVariableSizedArray (dt: A.decl_type): (A.decl_type * chunk * exp list) opt
       let dt', chunk', exp' = handleTopLevel dt in
       (* Try to compile the expression to a constant *)
       let (se, e', _) = doExp true lo (AExp (Some intType)) in
-      if isNotEmpty se || not (isConstant e') then
+      if isNotEmpty se || not (isConstantArrayLength e') then
         begin
           isVLA := true;
           let new_e = if doPureExp lo = None then [e'] else [] in
